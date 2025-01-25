@@ -3,8 +3,10 @@
 <ul>
     <% newListItems.forEach(item => { %>
         <li>
-            <input type="checkbox" name="checkbox" value="<%= item._id %>">
-            <%= item.name %>
+            <form action="/delete" method="POST" style="display:inline;">
+                <input type="checkbox" name="checkbox" value="<%= item._id %>" onchange="this.form.submit()">
+                <%= item.name %>
+            </form>
         </li>
     <% }) %>
 </ul>
@@ -13,9 +15,6 @@
     <input type="hidden" name="user" value="<%= user %>">
     <button type="submit">Add</button>
 </form>
-<form action="/delete" method="POST">
-    <button type="submit">Delete selected</button>
-</form>
-</div>
 <%- include("footer") -%>
+
 

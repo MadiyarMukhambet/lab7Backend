@@ -1,11 +1,20 @@
 <%- include("header") -%>
 <h1>Profile of <%= user.username %></h1>
+
+<!-- Отображение роли только для админа -->
+<% if (user.role === "admin") { %>
+    <p><strong>Role:</strong> Admin</p>
+<% } %>
+
 <form action="/profile/<%= user.username %>" method="POST">
     <label for="newUsername">Username:</label>
     <input type="text" id="newUsername" name="newUsername" value="<%= user.username %>">
 
-    <label for="newPassword">Password:</label>
+    <label for="newPassword">New Password:</label>
     <input type="password" id="newPassword" name="newPassword" placeholder="Enter new password">
+
+    <label for="confirmPassword">Confirm New Password:</label>
+    <input type="password" id="confirmPassword" name="confirmPassword" placeholder="Confirm new password">
 
     <button type="submit">Update Profile</button>
 </form>

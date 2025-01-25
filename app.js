@@ -1,13 +1,11 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
-const bcrypt = require("bcryptjs");
+const bcrypt = require("bcrypt");
 require("dotenv").config();
 
 const app = express();
-const path = require("path");
-app.set("views", path.join(__dirname, "views"));
-app.use(express.static(path.join(__dirname, "public")));
+
 // Middleware
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({ extended: true }));
@@ -105,19 +103,31 @@ app.get("/profile/:username", (req, res) => {
 
 app.post("/profile/:username", async (req, res) => {
   const { username } = req.params;
-  const { newUsername, newPassword } = req.body;
+  const { newUsername, newPassword, confirmPassword } = req.body;
 
   if (!currentUser || username !== currentUser.username) {
     return res.redirect("/login");
   }
 
+  // Проверка совпадения паролей
+  if (newPassword !== confirmPassword) {
+    return res.render("profile", {
+      user: currentUser,
+      error: "Passwords do not match.",
+    });
+  }
+
   try {
-    if (newUsername) {
+    // Изменение имени пользователя, если указано
+    if (newUsername && newUsername !== currentUser.username) {
       currentUser.username = newUsername;
     }
+
+    // Изменение пароля, если введен новый
     if (newPassword) {
       currentUser.password = await bcrypt.hash(newPassword, 10);
     }
+
     await currentUser.save();
     res.redirect(`/profile/${currentUser.username}`);
   } catch (err) {
@@ -125,6 +135,7 @@ app.post("/profile/:username", async (req, res) => {
     res.redirect(`/profile/${username}`);
   }
 });
+
 
 app.get("/lists/:username", async (req, res) => {
   if (!currentUser || req.params.username !== currentUser.username) {
@@ -177,6 +188,8 @@ app.post("/delete", async (req, res) => {
   }
 });
 
+
 // Start server
-const PORT = process.env.PORT || 3000; // Используем порт из окружения или 3000 по умолчанию
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(3000, () => {
+  console.log("Server is running on port 3000");
+});
