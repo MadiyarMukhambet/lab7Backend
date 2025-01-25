@@ -2,25 +2,60 @@ const express = require("express");
 const bodyParser = require("body-parser");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
+const session = require("express-session");
+const compression = require("compression");
+const helmet = require("helmet");
+const morgan = require("morgan");
 require("dotenv").config();
 
 const app = express();
 const path = require("path");
-app.set("views", path.join(__dirname, "views"));
-app.use(express.static(path.join(__dirname, "public")));
+
 // Middleware
+app.use(compression());
+app.use(helmet());
+app.use(morgan("combined"));
+app.set("views", path.join(__dirname, "views"));
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({ extended: true }));
-app.use(express.static("public"));
+app.use(express.static(path.join(__dirname, "public")));
+
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "default_secret",
+    resave: false,
+    saveUninitialized: true,
+    cookie: { secure: process.env.NODE_ENV === "production" },
+  })
+);
 
 // Connect to MongoDB
-mongoose
-  .connect(process.env.DB, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
-  .then(() => console.log("Connected to MongoDB Atlas"))
-  .catch((err) => console.error("Error connecting to MongoDB Atlas:", err));
+let isConnected = false;
+const connectToDatabase = async () => {
+  if (isConnected) {
+    return;
+  }
+  try {
+    const db = await mongoose.connect(process.env.DB, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+    });
+    isConnected = db.connections[0].readyState;
+    console.log("Connected to MongoDB Atlas");
+  } catch (err) {
+    console.error("Error connecting to MongoDB Atlas:", err);
+    throw err;
+  }
+};
+
+app.use(async (req, res, next) => {
+  try {
+    await connectToDatabase();
+    next();
+  } catch (err) {
+    res.status(500).send("Database connection error");
+  }
+});
 
 // Schemas and Models
 const userSchema = new mongoose.Schema({
@@ -43,13 +78,18 @@ const defaultItems = [
   { name: "<-- Check this to delete an item." },
 ];
 
-// Global user storage
-let currentUser = null;
+// Middleware for authentication
+const isAuthenticated = (req, res, next) => {
+  if (!req.session.user) {
+    return res.redirect("/login");
+  }
+  next();
+};
 
 // Routes
 app.get("/", (req, res) => {
-  if (currentUser) {
-    return res.redirect(`/lists/${currentUser.username}`);
+  if (req.session.user) {
+    return res.redirect(`/lists/${req.session.user.username}`);
   }
   res.redirect("/login");
 });
@@ -63,7 +103,7 @@ app.post("/login", async (req, res) => {
   try {
     const user = await User.findOne({ username });
     if (user && (await bcrypt.compare(password, user.password))) {
-      currentUser = user;
+      req.session.user = user; // Сохраняем пользователя в сессии
       return res.redirect(`/lists/${username}`);
     }
     res.render("login", { error: "Invalid username or password." });
@@ -91,50 +131,53 @@ app.post("/register", async (req, res) => {
 });
 
 app.get("/logout", (req, res) => {
-  currentUser = null;
-  res.redirect("/login");
+  req.session.destroy(() => {
+    res.redirect("/login");
+  });
 });
 
-app.get("/profile/:username", (req, res) => {
+app.get("/profile/:username", isAuthenticated, (req, res) => {
   const { username } = req.params;
-  if (!currentUser || username !== currentUser.username) {
+  if (username !== req.session.user.username) {
     return res.redirect("/login");
   }
-  res.render("profile", { user: currentUser });
+  res.render("profile", { user: req.session.user });
 });
 
-app.post("/profile/:username", async (req, res) => {
+app.post("/profile/:username", isAuthenticated, async (req, res) => {
   const { username } = req.params;
   const { newUsername, newPassword } = req.body;
 
-  if (!currentUser || username !== currentUser.username) {
+  if (username !== req.session.user.username) {
     return res.redirect("/login");
   }
 
   try {
     if (newUsername) {
-      currentUser.username = newUsername;
+      req.session.user.username = newUsername;
+      await User.findByIdAndUpdate(req.session.user._id, { username: newUsername });
     }
     if (newPassword) {
-      currentUser.password = await bcrypt.hash(newPassword, 10);
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      await User.findByIdAndUpdate(req.session.user._id, { password: hashedPassword });
     }
-    await currentUser.save();
-    res.redirect(`/profile/${currentUser.username}`);
+    res.redirect(`/profile/${req.session.user.username}`);
   } catch (err) {
     console.error(err);
     res.redirect(`/profile/${username}`);
   }
 });
 
-app.get("/lists/:username", async (req, res) => {
-  if (!currentUser || req.params.username !== currentUser.username) {
+app.get("/lists/:username", isAuthenticated, async (req, res) => {
+  const { username } = req.params;
+  if (username !== req.session.user.username) {
     return res.redirect("/login");
   }
 
   try {
-    let foundItems = await Item.find({ user: currentUser.username });
+    let foundItems = await Item.find({ user: username });
     if (foundItems.length === 0) {
-      const userDefaultItems = defaultItems.map((item) => ({ ...item, user: currentUser.username }));
+      const userDefaultItems = defaultItems.map((item) => ({ ...item, user: username }));
       await Item.insertMany(userDefaultItems);
       foundItems = userDefaultItems;
     }
@@ -142,7 +185,7 @@ app.get("/lists/:username", async (req, res) => {
     res.render("list", {
       listTitle: "Today",
       newListItems: foundItems,
-      user: currentUser,
+      user: req.session.user,
     });
   } catch (err) {
     console.error(err);
@@ -150,33 +193,29 @@ app.get("/lists/:username", async (req, res) => {
   }
 });
 
-app.post("/lists", async (req, res) => {
-  if (!currentUser) return res.redirect("/login");
-
+app.post("/lists", isAuthenticated, async (req, res) => {
   const { newItem } = req.body;
-  const item = new Item({ name: newItem, user: currentUser.username });
+  const item = new Item({ name: newItem, user: req.session.user.username });
   try {
     await item.save();
-    res.redirect(`/lists/${currentUser.username}`);
+    res.redirect(`/lists/${req.session.user.username}`);
   } catch (err) {
     console.error(err);
-    res.redirect(`/lists/${currentUser.username}`);
+    res.redirect(`/lists/${req.session.user.username}`);
   }
 });
 
-app.post("/delete", async (req, res) => {
-  if (!currentUser) return res.redirect("/login");
-
+app.post("/delete", isAuthenticated, async (req, res) => {
   const { checkbox } = req.body;
   try {
     await Item.findByIdAndDelete(checkbox);
-    res.redirect(`/lists/${currentUser.username}`);
+    res.redirect(`/lists/${req.session.user.username}`);
   } catch (err) {
     console.error(err);
-    res.redirect(`/lists/${currentUser.username}`);
+    res.redirect(`/lists/${req.session.user.username}`);
   }
 });
 
 // Start server
-const PORT = process.env.PORT || 3000; // Используем порт из окружения или 3000 по умолчанию
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
