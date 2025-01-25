@@ -5,6 +5,8 @@ const bcrypt = require("bcryptjs");
 require("dotenv").config();
 
 const app = express();
+const path = require("path");
+app.set("views", path.join(__dirname, "views"));
 
 // Middleware
 app.set("view engine", "ejs");
