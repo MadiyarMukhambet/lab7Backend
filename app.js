@@ -7,7 +7,7 @@ require("dotenv").config();
 const app = express();
 const path = require("path");
 app.set("views", path.join(__dirname, "views"));
-
+app.use(express.static(path.join(__dirname, "public")));
 // Middleware
 app.set("view engine", "ejs");
 app.use(bodyParser.urlencoded({ extended: true }));
